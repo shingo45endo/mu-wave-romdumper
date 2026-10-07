@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>mu-wave-romdumper - MU1000</title>
+	<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+	<link href="web/page.css" rel="stylesheet">
+</head>
+<body>
+	<nav class="navbar navbar-light bg-light sticky-top">
+		<div class="container align-items-start">
+			<h1 class="h6"><a href="https://github.com/shingo45endo/mu-wave-romdumper" class="navbar-brand" target="_blank" rel="noopener noreferrer">mu-wave-romdumper</a></h1>
+			<ul class="nav nav-pills">
+				<li class="nav-item"><a class="nav-link" href="index.html">MU2000 (4 hours)</a></li>
+				<li class="nav-item"><a class="nav-link active" aria-current="page" href="mu1000.html">MU1000 (20 hours)</a></li>
+			</ul>
+		</div>
+	</nav>
+
+	<main class="container mb-3">
+		<div class="alert alert-warning mt-3" role="alert">
+			<ul class="my-0">
+				<li>This page reads the wave ROM through the SWP30's registers. It works on the MU1000 and the MU2000, but it is slow: about 20 hours for the whole ROM. An MU2000 should use the <a href="index.html" class="alert-link">MU2000 page</a> instead.</li>
+				<li>Nothing in the synth is changed. The dump only reads the wave ROM.</li>
+				<li>The progress is saved in this browser all the time. You can stop the dump or close the page, and continue later. Do not send anything else to the synth while the dump runs.</li>
+			</ul>
+		</div>
+
+		<h2 class="h5 mt-3">1. Connection</h2>
+		<p class="mt-0">Choose the MIDI ports the synth is connected to, then check the connection.</p>
+		<div class="row">
+			<div class="col-md-5">
+				<div class="input-group mb-2">
+					<label class="input-group-text my-port-label" for="my-midi-in-devices">MIDI In</label>
+					<select id="my-midi-in-devices" class="form-select"></select>
+				</div>
+			</div>
+			<div class="col-md-5">
+				<div class="input-group mb-2">
+					<label class="input-group-text my-port-label" for="my-midi-out-devices">MIDI Out</label>
+					<select id="my-midi-out-devices" class="form-select"></select>
+				</div>
+			</div>
+			<div class="col-md-2">
+				<button id="my-detect" class="btn btn-outline-primary w-100" type="button" disabled>Check connection</button>
+			</div>
+		</div>
+		<div id="my-found" class="form-text"></div>
+
+		<h2 class="h5 mt-3">2. Files</h2>
+		<div id="my-resume" class="alert alert-info d-flex align-items-center gap-3 d-none" role="status">
+			<div id="my-resume-text" class="flex-grow-1"></div>
+			<button id="my-discard" class="btn btn-outline-secondary btn-sm flex-shrink-0" type="button">Discard</button>
+		</div>
+		<table id="my-files" class="table table-sm align-middle">
+			<thead>
+				<tr><th class="my-pair"></th><th>File</th><th class="text-end">Size</th><th>Holds</th><th class="my-progress">Progress</th><th>Status</th><th></th></tr>
+			</thead>
+			<tbody></tbody>
+		</table>
+		<div class="d-flex align-items-center gap-2">
+			<button id="my-start" class="btn btn-primary" type="button" disabled>Start dump</button>
+			<button id="my-stop" class="btn btn-outline-secondary d-none" type="button">Stop</button>
+			<button id="my-save-all" class="btn btn-success d-none" type="button">Save all files</button>
+			<span id="my-estimate" class="small text-body-secondary"></span>
+		</div>
+		<div id="my-stats" class="form-text"></div>
+
+		<h2 class="h5 mt-3">Log:</h2>
+		<div id="my-log" class="border rounded bg-body-tertiary p-2"></div>
+
+		<hr>
+		<div id="my-readme" class="mt-3"></div>
+	</main>
+
+	<div id="my-confirm-modal" class="modal fade" tabindex="-1" role="dialog">
+		<div class="modal-dialog"><div class="modal-content">
+			<div class="modal-header"><h2 id="my-confirm-title" class="modal-title h5"></h2><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+			<div class="modal-body"><p id="my-confirm-text" class="mb-0"></p></div>
+			<div class="modal-footer">
+				<button id="my-confirm-cancel" type="button" class="btn btn-secondary" data-bs-dismiss="modal"></button>
+				<button id="my-confirm-ok" type="button" class="btn btn-danger"></button>
+			</div>
+		</div></div>
+	</div>
+	<div id="my-error-modal" class="modal fade" tabindex="-1" role="dialog">
+		<div class="modal-dialog"><div class="modal-content">
+			<div class="modal-header"><h2 class="modal-title h5">Error</h2><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+			<div class="modal-body"><p id="my-error-text" class="mb-0"></p></div>
+		</div></div>
+	</div>
+
+	<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+	<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+	<script type="module">
+		import {SWP_REGISTER, buildRegisterRead, parseRegisterReply, buildPingMessage, parsePingReply} from './lib/sysex.js';
+		import {RomImage, ROM_FILES, ROM_DWORDS, PAIR_DWORDS, FILE_SIZE, makeFileName} from './lib/rom_image.js';
+		import {RegisterDumper, formatDwordAddr} from './lib/dump.js';
+		import {FileTable, setupMidiPorts, logLine, showError, confirmAction, downloadFile, sleepMs, formatTime, formatBytes} from './web/page.js';
+
+		// Every dword needs 2 replies of 13 bytes on a 31.25 kbps wire; that is what sets the speed.
+		const DWORD_MS     = 2 * 13 * 10 / 31.25;
+		const PAIR_SECONDS = PAIR_DWORDS * DWORD_MS / 1000;
+		const PING_GAP_MS  = 60;
+
+		const CHUNK_DWORDS = 256;
+
+		const elemDetect     = document.getElementById('my-detect');
+		const elemFound      = document.getElementById('my-found');
+		const elemResume     = document.getElementById('my-resume');
+		const elemResumeText = document.getElementById('my-resume-text');
+		const elemDiscard    = document.getElementById('my-discard');
+		const elemStart      = document.getElementById('my-start');
+		const elemStop       = document.getElementById('my-stop');
+		const elemSaveAll    = document.getElementById('my-save-all');
+		const elemStats      = document.getElementById('my-stats');
+
+		let activeTask = null;		// 'detect' | 'verify' | 'dump' | null
+
+		// the connection
+		let ports = null;
+		let detectReplies = [];
+		let device = null;
+		let hasSamplingSysex = false;
+		let modelName = 'mu1000';	// 'mu2000' when the synth also answers the sampling SysEx
+
+		// the dump
+		let image = new RomImage();
+		let startDword = 0;
+		let dumper = null;
+		let isStarted = false;		// a dump ran in this session
+		let startedAt = 0;
+		let endedAt = 0;
+
+		// what it gave, and what this browser keeps of it
+		let crcValues = null;		// CRC32 of each complete file, shown to the user
+		let saved = null;			// what this browser keeps: {dwords, savedAt, modelName}, or null
+		let isSaveErrorLogged = false;
+
+		let isRenderPending = false;
+
+		const table = new FileTable(document.getElementById('my-files'), {
+			modelName, isSelectable: false, pairSeconds: PAIR_SECONDS, onSave: (fileNo) => saveFile(fileNo),
+		});
+		document.getElementById('my-estimate').textContent = `about ${formatTime(2 * PAIR_SECONDS)} for the whole ROM`;
+
+		const isImageComplete = () => (image.getResumeDword() === ROM_DWORDS);
+
+		function updateButtons() {
+			const hasPorts = Boolean(ports?.input && ports?.output);
+			elemDetect.disabled = Boolean(activeTask) || !hasPorts;
+			// A complete dump stays until it is discarded, so that its files can still be saved.
+			elemStart.disabled = Boolean(activeTask) || !hasPorts || device === null || isImageComplete();
+			elemStart.textContent = (saved && !isImageComplete()) ? 'Resume dump' : 'Start dump';
+			elemDiscard.disabled = Boolean(activeTask);
+			ports?.lock(Boolean(activeTask));
+		}
+
+		function handleMidiMessage(bytes, receivedAt) {
+			if (activeTask === 'detect') {
+				const reply = parseRegisterReply(bytes);
+				if (reply) {
+					detectReplies.push(bytes[2] & 0x0f);
+				}
+				if (parsePingReply(bytes)) {
+					hasSamplingSysex = true;
+				}
+			} else if (activeTask === 'verify' || activeTask === 'dump') {
+				dumper?.feed(bytes, receivedAt);
+			}
+		}
+
+		// Reads the SWP30's status register on every device number; whoever answers is the synth. The sampling ping
+		// goes out too: a synth that answers it is an MU2000, which has a faster page.
+		async function detectConnection() {
+			activeTask = 'detect';
+			updateButtons();
+			detectReplies = [];
+			hasSamplingSysex = false;
+			elemFound.textContent = 'searching...';
+			elemFound.className = 'form-text';
+			logLine('looking for the synth on device numbers 1 to 16');
+			try {
+				// The port sends each one at its timestamp, so the gaps do not depend on timers. Only the wait for the replies does.
+				const startAt = performance.now();
+				for (let n = 0; n < 16; n++) {
+					ports.output.send(buildRegisterRead(SWP_REGISTER.STATUS, n), startAt + n * PING_GAP_MS);
+				}
+				ports.output.send(buildPingMessage(0), startAt + 16 * PING_GAP_MS);
+				await sleepMs(17 * PING_GAP_MS + 400);
+			} finally {
+				activeTask = null;
+			}
+			if (detectReplies.length === 0) {
+				device = null;
+				elemFound.textContent = 'No reply. Check the MIDI cables and ports, that the synth is an MU1000 or MU2000, and that "Receive System Exclusive" is on.';
+				elemFound.className = 'form-text text-danger';
+				logLine('no reply on any device number');
+			} else {
+				device = detectReplies[0];
+				elemFound.textContent = `Connected. Device No. ${device + 1}${(hasSamplingSysex) ? '. This synth is an MU2000: the MU2000 page reads it 5 times faster.' : ''}`;
+				elemFound.className = 'form-text text-success';
+				logLine(`replied on device number ${device + 1}${(hasSamplingSysex) ? ' (it also answers the sampling SysEx: an MU2000)' : ''}`);
+				modelName = (hasSamplingSysex) ? 'mu2000' : 'mu1000';
+				table.setModelName(modelName);
+			}
+			updateButtons();
+		}
+
+		// ---- progress kept in this browser
+		// IndexedDB is used as a file store: the image read so far, in pieces of 64 KiB, and a small record of how far it
+		// goes. Every accepted chunk writes its piece and the record in one transaction. Nothing is left to do when the page
+		// is closed (a write started then is not sure to finish): at most the last chunk is lost, and it is read again.
+		const DB_NAME = 'mu-wave-romdumper';
+		const DB_VERSION = 2;
+
+		const STATE_STORE   = 'state';
+		const SEGMENT_STORE = 'segments';
+
+		const STATE_KEY = 'mu1000';
+		const SEGMENT_DWORDS = 0x4000;
+
+		let dbPromise = null;
+
+		function openDb() {
+			dbPromise ??= new Promise((resolve, reject) => {
+				const request = indexedDB.open(DB_NAME, DB_VERSION);
+				request.onupgradeneeded = () => {
+					const db = request.result;
+					// Stores of another layout cannot be read, so they are removed.
+					for (const name of [...db.objectStoreNames]) {
+						db.deleteObjectStore(name);
+					}
+					db.createObjectStore(STATE_STORE);
+					db.createObjectStore(SEGMENT_STORE);
+				};
+				request.onsuccess = () => resolve(request.result);
+				request.onerror = () => reject(request.error);
+			});
+			return dbPromise;
+		}
+
+		// Runs `work({state, segments})` in one transaction over both stores, and resolves with what `work` returned once
+		// the transaction is committed.
+		async function runTransaction(mode, work) {
+			const db = await openDb();
+			return new Promise((resolve, reject) => {
+				const transaction = db.transaction([STATE_STORE, SEGMENT_STORE], mode);
+				const result = work({state: transaction.objectStore(STATE_STORE), segments: transaction.objectStore(SEGMENT_STORE)});
+				transaction.oncomplete = () => resolve(result);
+				transaction.onerror = () => reject(transaction.error);
+				transaction.onabort = () => reject(transaction.error);
+			});
+		}
+
+		// Reads what this browser keeps into the image.
+		async function loadSaved({isLogged = true} = {}) {
+			image = new RomImage();
+			crcValues = null;
+			try {
+				const stateRequest = await runTransaction('readonly', ({state}) => state.get(STATE_KEY));
+				saved = stateRequest.result ?? null;
+				if (saved) {
+					const segmentCount = Math.ceil(saved.dwords / SEGMENT_DWORDS);
+					const requests = await runTransaction('readonly', ({segments}) => Array.from({length: segmentCount}, (_, i) => segments.get(i)));
+					const bytes = new Uint8Array(saved.dwords * 4);
+					for (const [i, request] of requests.entries()) {
+						const offset = i * SEGMENT_DWORDS * 4;
+						bytes.set(request.result.subarray(0, Math.min(request.result.length, bytes.length - offset)), offset);
+					}
+					image.restore(bytes);
+					modelName = saved.modelName ?? modelName;
+					table.setModelName(modelName);
+					updateCrcValues();
+					const what = (isImageComplete()) ? 'a complete dump' : `a dump stopped at ${formatBytes(saved.dwords * 4)}`;
+					if (isLogged) {
+						logLine(`found ${what}, saved ${new Date(saved.savedAt).toLocaleString()}`);
+					}
+				}
+			} catch (e) {
+				logLine(`could not read the progress saved in this browser: ${e.message}`);
+				saved = null;
+				image = new RomImage();
+			}
+			renderResume();
+			render();
+			updateButtons();
+		}
+
+		// Writes the piece of the image that the last chunk went into, and how far the image goes.
+		function saveProgress() {
+			const dwords = image.getResumeDword();
+			const segmentNo = Math.floor((dwords - 1) / SEGMENT_DWORDS);
+			const piece = image.bytes.slice(segmentNo * SEGMENT_DWORDS * 4, dwords * 4);
+			const record = {dwords, savedAt: Date.now(), modelName};
+			runTransaction('readwrite', ({state, segments}) => {
+				segments.put(piece, segmentNo);
+				state.put(record, STATE_KEY);
+			}).then(() => {
+				saved = record;
+			}).catch((e) => {
+				if (!isSaveErrorLogged) {
+					isSaveErrorLogged = true;
+					logLine(`could not save the progress in this browser: ${e?.message ?? e}`);
+				}
+			});
+		}
+
+		async function discardSaved() {
+			try {
+				await runTransaction('readwrite', ({state, segments}) => {
+					state.clear();
+					segments.clear();
+				});
+			} catch (e) {
+				logLine(`could not remove the progress saved in this browser: ${e.message}`);
+			}
+			saved = null;
+			image = new RomImage();
+			crcValues = null;
+			isStarted = false;
+			elemStats.textContent = '';
+			renderResume();
+			render();
+			updateButtons();
+		}
+
+		function renderResume() {
+			const isShown = Boolean(saved) && !activeTask;
+			elemResume.classList.toggle('d-none', !isShown);
+			elemSaveAll.classList.toggle('d-none', !crcValues?.some((crc32) => (crc32 !== undefined)));
+			if (!isShown) {
+				return;
+			}
+			const when = new Date(saved.savedAt).toLocaleString();
+			elemResumeText.textContent = (saved.dwords === ROM_DWORDS)
+				? `A complete dump is kept in this browser (saved ${when}). Save the files, or discard it to start a new dump.`
+				: `A dump was stopped at ${formatBytes(saved.dwords * 4)} (saved ${when}). "Resume dump" continues from there, after checking that the synth is the same one.`;
+		}
+
+		function updateCrcValues() {
+			crcValues = ROM_FILES.map((_, fileNo) => ((image.getFileDoneBytes(fileNo) === FILE_SIZE) ? image.calcFileCrc32(fileNo) : undefined));
+		}
+
+		// ---- the run
+		async function startDump() {
+			activeTask = 'verify';
+			updateButtons();
+			renderResume();
+			startDword = 0;
+			if (saved) {
+				// Start from exactly what was saved, not from what this session may have read after it.
+				await loadSaved({isLogged: false});
+				activeTask = 'verify';
+				startDword = image.getResumeDword();
+				logLine(`checking that the synth matches the saved progress (${formatBytes(startDword * 4)})`);
+				const isSame = await verifySavedImage();
+				if (!activeTask) {
+					return;
+				}
+				if (!isSame) {
+					activeTask = null;
+					renderResume();
+					updateButtons();
+					showError('The synth\'s wave ROM does not match the progress saved in this browser. It may be a different synth, or the saved data is damaged.\n\n' +
+						'Use "Discard" to start from the beginning.');
+					return;
+				}
+				logLine('the synth matches; continuing');
+			} else {
+				image = new RomImage();
+				crcValues = null;
+				await navigator.storage?.persist?.();
+			}
+			activeTask = 'dump';
+			isStarted = true;
+			startedAt = performance.now();
+			endedAt = 0;
+			updateButtons();
+			elemStop.classList.remove('d-none');
+			elemSaveAll.classList.add('d-none');
+			renderResume();
+			dumper = new RegisterDumper({
+				send: (message) => ports.output.send(message),
+				device, image,
+				startDword, dwordCount: ROM_DWORDS - startDword,
+				onProgress: handleProgress,
+				onLog: logLine,
+				onFinish: finishDump,
+			});
+			dumper.start();
+			render();
+		}
+
+		// Reads 3 small spots of what was saved again and compares. A different synth, or a saved image from
+		// another source, is refused here instead of producing a mixed-up ROM image.
+		async function verifySavedImage() {
+			const spots = [startDword - CHUNK_DWORDS];
+			if (startDword >= 3 * CHUNK_DWORDS) {
+				spots.unshift(Math.floor(startDword / 3 / CHUNK_DWORDS) * CHUNK_DWORDS, Math.floor(startDword * 2 / 3 / CHUNK_DWORDS) * CHUNK_DWORDS);
+			}
+			for (const spot of spots) {
+				const isSame = await readAndCompare(spot);
+				if (!isSame) {
+					logLine(`the data at ${formatDwordAddr(spot)} differs from the saved progress`);
+					return false;
+				}
+			}
+			return true;
+		}
+
+		function readAndCompare(dwordAddr) {
+			return new Promise((resolve) => {
+				let isSame = false;
+				// A stand-in for the image: compares the chunk with what was saved instead of storing it.
+				const comparer = {
+					putBlock: (addr, bytes) => {
+						isSame = bytes.every((byte, i) => (byte === image.bytes[addr * 4 + i]));
+					},
+				};
+				dumper = new RegisterDumper({
+					send: (message) => ports.output.send(message),
+					device, image: comparer, startDword: dwordAddr, dwordCount: CHUNK_DWORDS,
+					onLog: logLine,
+					onFinish: (why) => resolve(why === 'done' && isSame),
+				});
+				dumper.start();
+			});
+		}
+
+		// After every chunk: check the known words, then save. A chunk that fails the check is not saved.
+		function handleProgress() {
+			const check = image.checkKnownWords();
+			if (check.mismatched.length) {
+				for (const {addr, expected, actual} of check.mismatched.slice(0, 3)) {
+					logLine(`  word at ${formatDwordAddr(addr)} should be ${expected.toString(16).toUpperCase().padStart(8, '0')} but is ${actual.toString(16).toUpperCase().padStart(8, '0')}`);
+				}
+				dumper.stop('the data does not match the known contents of the MU1000 / MU2000 wave ROM');
+				return;
+			}
+			saveProgress();
+			scheduleRender();
+		}
+
+		function finishDump(why) {
+			activeTask = null;
+			endedAt = performance.now();
+			ports.output?.clear?.();
+			elemStop.classList.add('d-none');
+			updateCrcValues();
+			const doneCount = crcValues.filter((crc32) => (crc32 !== undefined)).length;
+			logLine(`${why}: ${doneCount} of 4 files complete, ${formatBytes(image.getResumeDword() * 4)} in all, ${formatTime((endedAt - startedAt) / 1000)} this time` +
+				`${(dumper.totalRetries) ? `, ${dumper.totalRetries} chunk(s) read again` : ''}${(dumper.lateReplies) ? `, ${dumper.lateReplies} late reply(ies) dropped` : ''}`);
+			for (const [fileNo, crc32] of crcValues.entries()) {
+				if (crc32 !== undefined) {
+					logLine(`  ${makeFileName(modelName, fileNo)}: CRC32 ${crc32.toString(16).toUpperCase().padStart(8, '0')}`);
+				}
+			}
+			renderResume();
+			render();
+			updateButtons();
+		}
+
+		function scheduleRender() {
+			if (!isRenderPending) {
+				isRenderPending = true;
+				setTimeout(() => {
+					isRenderPending = false;
+					render();
+				}, 250);
+			}
+		}
+
+		function render() {
+			table.update(image, {
+				isRunning: activeTask === 'dump', isStarted: isStarted || Boolean(saved),
+				currentPairNo: Math.min(1, Math.floor(image.getResumeDword() / PAIR_DWORDS)), crcValues,
+			});
+			if (!isStarted) {
+				return;
+			}
+			const doneDwords = image.getResumeDword();
+			const elapsed = ((endedAt || performance.now()) - startedAt) / 1000;
+			const speed = (elapsed > 0) ? (doneDwords - startDword) * 4 / elapsed : 0;
+			const remaining = (activeTask && speed > 0) ? `, about ${formatTime((ROM_DWORDS - doneDwords) * 4 / speed)} to go` : '';
+			elemStats.textContent = `${formatBytes(doneDwords * 4)} received in all, ${(speed / 1024).toFixed(2)} KiB/s, ${formatTime(elapsed)} this time${remaining}` +
+				`${(dumper?.totalRetries) ? `, ${dumper.totalRetries} chunk(s) read again` : ''}`;
+		}
+
+		function saveFile(fileNo) {
+			const name = makeFileName(modelName, fileNo);
+			downloadFile(name, image.getFileBytes(fileNo));
+			logLine(`saved ${name}`);
+		}
+
+		elemDetect.addEventListener('click', detectConnection);
+		elemStart.addEventListener('click', startDump);
+		elemSaveAll.addEventListener('click', () => {
+			for (const [fileNo] of ROM_FILES.entries()) {
+				if (crcValues?.[fileNo] !== undefined) {
+					saveFile(fileNo);
+				}
+			}
+		});
+		// The progress is already saved, so stopping needs no question.
+		elemStop.addEventListener('click', () => {
+			if (activeTask === 'dump') {
+				dumper.stop('stopped');
+			}
+		});
+		// Discarding throws away up to 20 hours of reading, so it is asked about.
+		elemDiscard.addEventListener('click', async () => {
+			const body = (saved.dwords === ROM_DWORDS)
+				? 'The complete dump kept in this browser is removed. Files that you did not save are lost.'
+				: `${formatBytes(saved.dwords * 4)} of the ROM were read. The next dump starts from the beginning.`;
+			if (await confirmAction({title: 'Discard the saved dump?', body, ok: 'Discard', cancel: 'Keep it'})) {
+				await discardSaved();
+				logLine('the dump saved in this browser was discarded');
+			}
+		});
+
+		(async () => {
+			render();
+			updateButtons();
+			try {
+				document.getElementById('my-readme').innerHTML = marked.parse(await (await fetch('README.md')).text());
+				for (const elemTable of document.querySelectorAll('#my-readme table')) {
+					elemTable.classList.add('table', 'table-sm');
+				}
+			} catch {
+				// the README is a nicety; the tool works without it
+			}
+			await loadSaved();
+			ports = await setupMidiPorts({
+				elemIn: document.getElementById('my-midi-in-devices'),
+				elemOut: document.getElementById('my-midi-out-devices'),
+				onChange: () => {
+					device = null;
+					elemFound.textContent = '';
+					updateButtons();
+				},
+				onMessage: handleMidiMessage,
+			});
+			if (ports) {
+				logLine('ready - choose MIDI In and Out, then check the connection');
+			}
+		})();
+	</script>
+</body>
+</html>

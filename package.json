@@ -1,0 +1,19 @@
+{
+	"name": "mu-wave-romdumper",
+	"version": "0.1.0",
+	"description": "Dump the wave ROMs of a Yamaha MU2000/MU1000 over MIDI, without modifying the firmware",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "git+ssh://git@github.com/shingo45endo/mu-wave-romdumper.git"
+	},
+	"author": "shingo45endo",
+	"license": "MIT",
+	"engines": {
+		"node": ">=20"
+	},
+	"bugs": {
+		"url": "https://github.com/shingo45endo/mu-wave-romdumper/issues"
+	},
+	"homepage": "https://github.com/shingo45endo/mu-wave-romdumper#readme"
+}
