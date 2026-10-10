@@ -519,6 +519,25 @@
 				logLine('the dump saved in this browser was discarded');
 			}
 		});
+		// The progress survives leaving, but the connection does not: after coming back, it has to be checked again.
+		// Going to the MU2000 page is not asked about, because this page recommends it for an MU2000.
+		let isToMu2000Page = false;
+		const handleMu2000LinkClick = (event) => {
+			// A link opened in another tab leaves this page as it is.
+			isToMu2000Page = !(event.ctrlKey || event.shiftKey || event.metaKey || event.altKey);
+		};
+		for (const elemLink of document.querySelectorAll('a[href="index.html"]')) {
+			elemLink.addEventListener('click', handleMu2000LinkClick);
+		}
+		window.addEventListener('pageshow', () => {
+			isToMu2000Page = false;
+		});
+		window.addEventListener('beforeunload', (event) => {
+			if (!isToMu2000Page && (activeTask || device !== null)) {
+				event.preventDefault();
+				event.returnValue = '';
+			}
+		});
 
 		(async () => {
 			render();
