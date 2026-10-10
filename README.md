@@ -46,6 +46,10 @@ How to Use
 * Before it continues, the page reads some data again and compares it with the saved data. If the synth is not the same one, it does not continue.
 * Use the same browser on the same PC to continue. The progress is not kept if you clear the site data of the browser.
 
+### Without a browser
+
+For the MU2000, there is also a way without a MIDI interface. The synth saves the wave ROM to its SmartMedia card as WAV files, and a command line tool makes the ROM files from them. You need a card and a card reader. See [cli/README.md](cli/README.md).
+
 ### What you need
 
 * An MU2000 or MU1000 (also the EX models)
